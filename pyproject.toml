@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
+    "paramiko>=3.4.0",
     "typer>=0.9.0",
     "wcwidth>=0.2.6",
 ]

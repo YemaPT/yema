@@ -4,6 +4,7 @@ Implementation is split across clients, services, storage and UI modules.
 """
 
 from .clients.qbittorrent import *  # noqa: F401,F403
+from .clients.transmission import *  # noqa: F401,F403
 from .clients.yemapt import *  # noqa: F401,F403
 from .commands.qb import (  # noqa: F401
     check_torrents,

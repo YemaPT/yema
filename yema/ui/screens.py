@@ -230,19 +230,22 @@ def show_check_results(results: List[Dict[str, Any]]) -> None:
         selected = min(selected, len(page_items) - 1)
         
         width = get_terminal_width()
-        name_width = max(20, min(60, width - 42))
+        source_width = 6
+        name_width = max(20, min(60, width - 50))
         
         clear_screen()
         typer.echo("PT 站点查询结果\n")
-        typer.echo(f"{'Name':{name_width}} {'Seed':>10} {'ID':>15}")
-        typer.echo("-" * min(width, max(name_width + 27, 42)))
+        source_header = pad_display("来源", source_width)
+        typer.echo(f"{source_header} {'Name':{name_width}} {'Seed':>10} {'ID':>15}")
+        typer.echo("-" * min(width, max(name_width + source_width + 28, 50)))
         
         for i, item in enumerate(page_items):
+            source = pad_display(str(item.get("source", "-")), source_width)
             name = truncate_display(item["name"], name_width)
             name_field = pad_display(name, name_width)
             seeding = item["seed_display"]
             torrent_id = item["torrent_id_display"]
-            row = f"{name_field} {seeding:>10} {str(torrent_id):>15}"
+            row = f"{source} {name_field} {seeding:>10} {str(torrent_id):>15}"
             
             if i == selected:
                 typer.echo(f"\x1b[7m{row}\x1b[0m")
@@ -293,28 +296,31 @@ def show_pub_results(results: List[Dict[str, Any]]) -> None:
         selected = min(selected, len(page_items) - 1)
 
         width = get_terminal_width()
-        name_width = max(20, min(60, width - 42))
+        source_width = 6
+        name_width = max(20, min(60, width - 50))
         size_width = 12
-        tracker_width = max(15, width - name_width - size_width - 4)
+        tracker_width = max(15, width - name_width - size_width - source_width - 5)
 
         clear_screen()
         typer.echo("不在 PT 站点的种子\n")
         header = (
-            pad_display("名称", name_width) + " "
+            pad_display("来源", source_width) + " "
+            + pad_display("名称", name_width) + " "
             + pad_display("大小", size_width) + " "
             + "Tracker"
         )
         typer.echo(header)
-        typer.echo("-" * min(width, name_width + size_width + tracker_width + 4))
+        typer.echo("-" * min(width, name_width + size_width + source_width + tracker_width + 5))
 
         for i, item in enumerate(page_items):
+            source = pad_display(str(item.get("source", "-")), source_width)
             name = truncate_display(item["name"], name_width)
             name_field = pad_display(name, name_width)
             size = format_bytes(item["size"])
             size_field = pad_display(size, size_width)
             trackers = _format_tracker_domains(item["tracker_domains"])
             trackers = truncate_display(trackers, tracker_width)
-            row = f"{name_field} {size_field} {trackers}"
+            row = f"{source} {name_field} {size_field} {trackers}"
 
             if i == selected:
                 typer.echo(f"\x1b[7m{row}\x1b[0m")
