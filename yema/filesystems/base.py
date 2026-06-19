@@ -24,6 +24,9 @@ class FileSystem:
     def read_file(self, path: str) -> bytes:
         raise NotImplementedError
 
+    def list_files(self, limit: int = 20) -> List[str]:
+        return []
+
     def list_directories(self, limit: int = 20) -> List[str]:
         return []
 
@@ -50,6 +53,22 @@ class LocalFileSystem(FileSystem):
     def validate(self) -> None:
         if self.root and not self.root.exists():
             raise UnsupportedFileSystemError(f"本地路径不存在: {self.root}")
+
+    def list_files(self, limit: int = 20) -> List[str]:
+        roots = [self.root] if self.root else _default_torrent_roots()
+        result = []
+        for root in roots:
+            if root is None:
+                continue
+            root = root.expanduser()
+            if not root.exists():
+                continue
+            for path in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+                if path.is_file():
+                    result.append(str(path))
+                    if len(result) >= limit:
+                        return result
+        return result
 
     def list_directories(self, limit: int = 20) -> List[str]:
         roots = [self.root] if self.root else _default_torrent_roots()
@@ -92,6 +111,9 @@ class PlaceholderRemoteFileSystem(FileSystem):
 
     def list_directories(self, limit: int = 20) -> List[str]:
         raise UnsupportedFileSystemError(f"{self.fs_type} 文件系统目录列表尚未实现。")
+
+    def list_files(self, limit: int = 20) -> List[str]:
+        raise UnsupportedFileSystemError(f"{self.fs_type} 文件系统文件列表尚未实现。")
 
     def iter_torrent_files(self) -> Iterable[str]:
         raise UnsupportedFileSystemError(f"{self.fs_type} 文件系统遍历尚未实现。")
@@ -162,6 +184,40 @@ class FTPFileSystem(FileSystem):
     def validate(self) -> None:
         with self._connect() as ftp:
             ftp.nlst(self.root)
+
+    def list_files(self, limit: int = 20) -> List[str]:
+        with self._connect() as ftp:
+            try:
+                entries = list(ftp.mlsd(self.root))
+            except Exception:
+                return self._list_files_with_nlst(ftp, limit)
+            result = []
+            for name, facts in entries:
+                if name in {".", ".."}:
+                    continue
+                if facts.get("type") == "file":
+                    result.append(posixpath.join(self.root, name))
+                    if len(result) >= limit:
+                        break
+            return result
+
+    def _list_files_with_nlst(self, ftp: FTP, limit: int) -> List[str]:
+        result = []
+        for name in ftp.nlst(self.root):
+            path = name if name.startswith("/") else posixpath.join(self.root, name)
+            current = ftp.pwd()
+            try:
+                ftp.cwd(path)
+            except Exception:
+                result.append(path)
+                if len(result) >= limit:
+                    break
+            finally:
+                try:
+                    ftp.cwd(current)
+                except Exception:
+                    pass
+        return result
 
     def list_directories(self, limit: int = 20) -> List[str]:
         with self._connect() as ftp:
@@ -264,6 +320,33 @@ class WebDAVFileSystem(FileSystem):
         except urllib.error.URLError as exc:
             raise UnsupportedFileSystemError(f"连接 WebDAV 失败: {exc}") from exc
 
+    def list_files(self, limit: int = 20) -> List[str]:
+        headers = self._headers()
+        headers["Depth"] = "1"
+        request = urllib.request.Request(self._url(self.root), headers=headers, method="PROPFIND")
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                body = response.read()
+        except urllib.error.URLError as exc:
+            raise UnsupportedFileSystemError(f"列出 WebDAV 文件失败: {exc}") from exc
+
+        root = ET.fromstring(body)
+        result = []
+        for response in root.findall("{DAV:}response"):
+            href = response.find("{DAV:}href")
+            resource_type = response.find(".//{DAV:}resourcetype")
+            if href is None or not href.text:
+                continue
+            path = urllib.parse.unquote(href.text)
+            if path.rstrip("/") == (self.root or "/").rstrip("/"):
+                continue
+            if resource_type is not None and resource_type.find("{DAV:}collection") is not None:
+                continue
+            result.append(path)
+            if len(result) >= limit:
+                break
+        return result
+
     def list_directories(self, limit: int = 20) -> List[str]:
         headers = self._headers()
         headers["Depth"] = "1"
@@ -349,6 +432,22 @@ class SFTPFileSystem(FileSystem):
         transport, sftp = self._connect()
         try:
             sftp.stat(self.root)
+        finally:
+            sftp.close()
+            transport.close()
+
+    def list_files(self, limit: int = 20) -> List[str]:
+        import stat
+
+        transport, sftp = self._connect()
+        try:
+            result = []
+            for entry in sftp.listdir_attr(self.root):
+                if stat.S_ISREG(entry.st_mode):
+                    result.append(posixpath.join(self.root, entry.filename))
+                    if len(result) >= limit:
+                        break
+            return result
         finally:
             sftp.close()
             transport.close()
@@ -465,6 +564,14 @@ class SSHFileSystem(FileSystem):
         command = (
             f"find {shlex.quote(self.root)} -mindepth 1 -maxdepth 1 "
             f"-type d -print | head -n {int(limit)}"
+        )
+        output = self._exec_bytes(command).decode("utf-8", errors="replace")
+        return [line.strip() for line in output.splitlines() if line.strip()]
+
+    def list_files(self, limit: int = 20) -> List[str]:
+        command = (
+            f"find {shlex.quote(self.root)} -mindepth 1 -maxdepth 1 "
+            f"-type f -print | head -n {int(limit)}"
         )
         output = self._exec_bytes(command).decode("utf-8", errors="replace")
         return [line.strip() for line in output.splitlines() if line.strip()]

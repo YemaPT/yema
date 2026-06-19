@@ -8,6 +8,22 @@ from .utils import format_secret, load_settings
 config_app = typer.Typer(help="查看配置并管理 debug 开关")
 
 
+def format_filesystem_label(index: int, fs: dict) -> str:
+    name = str(fs.get("name") or f"文件系统 {index + 1}")
+    return f"文件系统 {index + 1}: {name} ({fs.get('type', 'local')})"
+
+
+def format_selected_filesystem(filesystem_id: str, filesystems: list[dict]) -> str:
+    if not filesystem_id:
+        return "(未配置)"
+    if filesystem_id == "local":
+        return "local"
+    for index, fs in enumerate(filesystems):
+        if str(fs.get("id") or "") == filesystem_id:
+            return format_filesystem_label(index, fs)
+    return "文件系统未配置"
+
+
 @config_app.callback(invoke_without_command=True)
 def config(ctx: Context):
     """显示当前配置。"""
@@ -37,11 +53,11 @@ def config(ctx: Context):
         "  filesystems: "
         + (
             "local"
-            + (", " + ", ".join(str(fs.get("id")) for fs in filesystems if fs.get("id")) if filesystems else "")
+            + (", " + ", ".join(format_filesystem_label(index, fs) for index, fs in enumerate(filesystems)) if filesystems else "")
         )
     )
     typer.echo(f"  Transmission host: {tr.get('host', '(未配置)')}")
-    typer.echo(f"  Transmission filesystem: {tr.get('filesystem', '(未配置)')}")
+    typer.echo(f"  Transmission filesystem: {format_selected_filesystem(str(tr.get('filesystem') or ''), filesystems)}")
     mappings = tr.get("path_mappings", [])
     if isinstance(mappings, list) and mappings:
         mapping_text = ", ".join(f"{m.get('from')}->{m.get('to')}" for m in mappings if isinstance(m, dict))

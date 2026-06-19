@@ -171,7 +171,7 @@ def apply_path_mappings(path: str, mappings: List[Dict[str, str]]) -> str:
     return path
 
 
-def exit_with_filesystem_directory_preview(filesystem_id: str, fs: Any, errors: List[str]) -> None:
+def exit_with_filesystem_file_preview(filesystem_id: str, fs: Any, errors: List[str]) -> None:
     typer.echo("无法按 Transmission 返回路径读取种子文件。")
     typer.echo(f"文件系统: {filesystem_id}")
     if errors:
@@ -179,17 +179,17 @@ def exit_with_filesystem_directory_preview(filesystem_id: str, fs: Any, errors: 
         for error in errors:
             typer.echo(f"  {error}")
 
-    typer.echo("用户配置目录下的前 20 个目录:")
+    typer.echo("文件系统登录目录下的前 20 个文件:")
     try:
-        directories = fs.list_directories(20)
+        files = fs.list_files(20)
     except Exception as exc:
-        typer.echo(f"  目录列表读取失败: {exc}")
+        typer.echo(f"  文件列表读取失败: {exc}")
         raise typer.Exit(code=1)
 
-    if not directories:
-        typer.echo("  (未找到目录)")
+    if not files:
+        typer.echo("  (未找到文件)")
     else:
-        for path in directories:
+        for path in files:
             typer.echo(f"  {path}")
     raise typer.Exit(code=1)
 
@@ -253,7 +253,7 @@ def resolve_transmission_pieces_hash(
                 typer.echo(f"[DEBUG] 读取 Transmission 种子文件失败: {path}: {exc}")
             continue
     if debug:
-        typer.echo(f"[DEBUG] Transmission 按候选路径读取失败，展示文件系统目录并退出: {info_hash}")
+        typer.echo(f"[DEBUG] Transmission 按候选路径读取失败，展示文件系统文件并退出: {info_hash}")
     if not candidates:
         errors.append("Transmission 未返回 torrentFile，无法生成候选路径。")
-    exit_with_filesystem_directory_preview(filesystem_id, fs, errors)
+    exit_with_filesystem_file_preview(filesystem_id, fs, errors)

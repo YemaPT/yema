@@ -89,7 +89,8 @@ def _select_sources(command_name: str) -> List[str]:
             value = items[selected][0]
             return configured if value == "all" else [value]
         elif key == "ESC" or key == "q":
-            raise typer.Exit(code=1, message="已取消操作。")
+            typer.echo("已取消操作。")
+            raise typer.Exit(code=0)
 
 
 def _get_qb_context() -> Dict[str, Any]:
