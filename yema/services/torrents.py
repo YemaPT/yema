@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import base64
-import hashlib
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 import typer
 
@@ -22,6 +20,7 @@ from yema.domain.trackers import (
     extract_yemapt_tracker_user_id,
     normalize_user_id,
 )
+from yema.domain.torrent_files import bencode_bytes, calc_pieces_hash
 from yema.storage.cache import (
     get_cached_pieces_hash,
     get_valid_pt_cache_entry,
@@ -75,20 +74,12 @@ def get_torrent_detail_url(
     return None
 
 
-def bencode_bytes(data: bytes) -> bytes:
-    return str(len(data)).encode("ascii") + b":" + data
-
-
-def calc_pieces_hash(piece_hashes: List[str]) -> str:
-    if not piece_hashes:
-        return "-"
-    pieces_raw = b"".join(bytes.fromhex(piece_hash) for piece_hash in piece_hashes)
-    pieces_bencoded = bencode_bytes(pieces_raw)
-    return hashlib.sha1(pieces_bencoded).hexdigest()
-
-
 def fetch_all_torrents_pieces_hashes(
-    opener: urllib.request.OpenerDirector, host: str, torrents: List[Dict[str, Any]]
+    opener: urllib.request.OpenerDirector | None,
+    host: str,
+    torrents: List[Dict[str, Any]],
+    pieces_hash_resolver: Callable[[Dict[str, Any]], str] | None = None,
+    debug: bool = False,
 ) -> Dict[str, str]:
     """
     Fetch pieces hashes for all torrents, using cache when available.
@@ -101,28 +92,63 @@ def fetch_all_torrents_pieces_hashes(
         print(f"\r处理中... {idx + 1}/{total}", end="", flush=True)
         info_hash = torrent.get("hash")
         if not info_hash:
+            if debug:
+                typer.echo(f"\n[DEBUG] 跳过缺少 infohash 的种子: name={torrent.get('name', '<unknown>')}")
             continue
+
+        if debug:
+            typer.echo(
+                "\n[DEBUG] pieces hash 开始: "
+                f"{idx + 1}/{total}, "
+                f"source={torrent.get('source', '-')}, "
+                f"name={torrent.get('name', '<unknown>')}, "
+                f"info_hash={info_hash}"
+            )
         
         # Check cache first
         pieces_hash = get_cached_pieces_hash(info_hash)
         if pieces_hash is not None:
+            if debug:
+                typer.echo(f"[DEBUG] pieces hash 缓存命中: info_hash={info_hash}, pieces_hash={pieces_hash}")
             result[info_hash] = pieces_hash
         else:
             try:
-                piece_hashes = fetch_qb_torrent_piece_hashes(opener, host, info_hash)
-                pieces_hash = calc_pieces_hash(piece_hashes)
-                save_pieces_to_cache(info_hash, pieces_hash)
+                if pieces_hash_resolver is not None:
+                    if debug:
+                        typer.echo(f"[DEBUG] pieces hash 使用自定义解析器: info_hash={info_hash}")
+                    pieces_hash = pieces_hash_resolver(torrent)
+                else:
+                    if opener is None:
+                        raise RuntimeError("缺少 qBittorrent opener，无法获取 pieces hash。")
+                    if debug:
+                        typer.echo(f"[DEBUG] qBittorrent 请求 piece hashes: host={host}, info_hash={info_hash}")
+                    piece_hashes = fetch_qb_torrent_piece_hashes(opener, host, info_hash)
+                    if debug:
+                        typer.echo(f"[DEBUG] qBittorrent piece hashes 返回: info_hash={info_hash}, count={len(piece_hashes)}")
+                    pieces_hash = calc_pieces_hash(piece_hashes)
+                    save_pieces_to_cache(info_hash, pieces_hash)
             except Exception:
+                if pieces_hash_resolver is not None:
+                    if debug:
+                        typer.echo(f"[DEBUG] pieces hash 解析失败并向上抛出: info_hash={info_hash}")
+                    raise
                 pieces_hash = "error"
+                if debug:
+                    typer.echo(f"[DEBUG] qBittorrent pieces hash 获取失败: info_hash={info_hash}")
 
             result[info_hash] = pieces_hash
+            if debug:
+                typer.echo(f"[DEBUG] pieces hash 完成: info_hash={info_hash}, pieces_hash={pieces_hash}")
     
     print()  # 完成后换行
     return result
 
 
 def deduplicate_torrents_by_pieces_hash(
-    opener: urllib.request.OpenerDirector, host: str, torrents: List[Dict[str, Any]]
+    opener: urllib.request.OpenerDirector | None,
+    host: str,
+    torrents: List[Dict[str, Any]],
+    pieces_hash_resolver: Callable[[Dict[str, Any]], str] | None = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Group torrents by pieces hash.
@@ -130,7 +156,7 @@ def deduplicate_torrents_by_pieces_hash(
     Uses cache to avoid recalculating pieces hashes.
     """
     result = {}
-    pieces_hashes = fetch_all_torrents_pieces_hashes(opener, host, torrents)
+    pieces_hashes = fetch_all_torrents_pieces_hashes(opener, host, torrents, pieces_hash_resolver, debug)
     
     for torrent in torrents:
         info_hash = torrent.get("hash")
@@ -153,17 +179,19 @@ def deduplicate_torrents_by_pieces_hash(
 
 
 def collect_pt_check_results(
-    opener: urllib.request.OpenerDirector,
+    opener: urllib.request.OpenerDirector | None,
     host: str,
     torrents: List[Dict[str, Any]],
     debug: bool,
+    pieces_hash_resolver: Callable[[Dict[str, Any]], str] | None = None,
+    tracker_url_fetcher: Callable[[Dict[str, Any]], List[str]] | None = None,
 ) -> List[Dict[str, Any]]:
     if debug:
         typer.echo("[DEBUG] 检查过程开始")
         typer.echo(f"[DEBUG] 总种子数: {len(torrents)}")
 
     print("准备数据中...")
-    pieces_hashes = fetch_all_torrents_pieces_hashes(opener, host, torrents)
+    pieces_hashes = fetch_all_torrents_pieces_hashes(opener, host, torrents, pieces_hash_resolver)
 
     if debug:
         valid_hashes = sum(1 for h in pieces_hashes.values() if h != "error")
@@ -256,8 +284,23 @@ def collect_pt_check_results(
             if not grouped_hash:
                 continue
             try:
-                tracker_urls = fetch_cached_qb_torrent_tracker_urls(opener, host, grouped_hash)
-            except Exception:
+                if debug:
+                    typer.echo(
+                        "[DEBUG] tracker 获取开始: "
+                        f"name={grouped_torrent.get('name', '<unknown>')}, "
+                        f"info_hash={grouped_hash}"
+                    )
+                if tracker_url_fetcher is not None:
+                    tracker_urls = tracker_url_fetcher(grouped_torrent)
+                else:
+                    if opener is None:
+                        raise RuntimeError("缺少 qBittorrent opener，无法获取 tracker。")
+                    tracker_urls = fetch_cached_qb_torrent_tracker_urls(opener, host, grouped_hash)
+                if debug:
+                    typer.echo(f"[DEBUG] tracker 获取完成: info_hash={grouped_hash}, count={len(tracker_urls)}")
+            except Exception as exc:
+                if debug:
+                    typer.echo(f"[DEBUG] tracker 获取失败: info_hash={grouped_hash}, error={exc}")
                 tracker_urls = []
 
             torrent_has_foreign_seed = False
@@ -324,6 +367,7 @@ def collect_pt_check_results(
             )
 
         results.append({
+            "source": torrent.get("source", "-"),
             "name": torrent.get("name", "<unknown>"),
             "pieces_hash": pieces_hash,
             "torrents": group["torrents"],
