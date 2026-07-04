@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +17,7 @@ from yema.core.debug import (
     get_exception_message,
     preview_bytes,
 )
+from yema.domain.torrent_files import BencodeError, piece_hashes_from_torrent_data
 from yema.domain.trackers import normalize_user_id
 
 def fetch_torrent_ids_from_pt(pieces_hash_list: List[str], debug: bool = False) -> Dict[str, int | None]:
@@ -111,6 +113,17 @@ def is_probable_torrent_file(data: bytes) -> bool:
     if not data or not data.startswith(b"d"):
         return False
     return b"4:info" in data
+
+
+def validate_torrent_data(torrent_id: int, data: bytes) -> None:
+    if not data:
+        raise BencodeError(f"种子内容为空，torrent_id={torrent_id}")
+    if not is_probable_torrent_file(data):
+        raise BencodeError(
+            f"返回内容不像 torrent 文件, torrent_id={torrent_id}, "
+            f"size={len(data)}, preview={preview_bytes(data)}"
+        )
+    piece_hashes_from_torrent_data(data)
 
 
 def get_yemapt_auth() -> str:
@@ -245,23 +258,37 @@ def download_torrent_from_pt(torrent_id: int) -> bytes:
     auth = get_yemapt_auth()
     if debug:
         typer.echo(f"[DEBUG] 开始下载 PT 种子: torrent_id={torrent_id}")
-    download_url = get_pt_download_url_from_key(torrent_id, auth, debug)
-    if debug:
-        typer.echo(f"[DEBUG] PT 下载 Key 返回地址: {download_url}")
-    data = download_torrent_bytes(
-        download_url,
-        {"User-Agent": "curl/8.0.1", "Connection": "close"},
-        debug,
-        "PT 下载免登录",
-    )
-    if not data:
-        raise RuntimeError(f"下载 PT 种子失败: 种子内容为空，torrent_id={torrent_id}")
-    if not is_probable_torrent_file(data):
-        raise RuntimeError(
-            "下载 PT 种子失败: 返回内容不是有效的 torrent 文件, "
-            f"torrent_id={torrent_id}, size={len(data)}, preview={preview_bytes(data)}"
+    last_error: BencodeError | None = None
+    max_retries = 10
+    for attempt in range(1, max_retries + 2):
+        if debug and attempt > 1:
+            delay = (attempt - 1) * 2
+            typer.echo(
+                f"[DEBUG] PT 种子解析失败后等待 {delay}s 重新下载: "
+                f"torrent_id={torrent_id}, retry={attempt - 1}/{max_retries}"
+            )
+            time.sleep(delay)
+        download_url = get_pt_download_url_from_key(torrent_id, auth, debug)
+        if debug:
+            typer.echo(f"[DEBUG] PT 下载 Key 返回地址: {download_url}")
+        data = download_torrent_bytes(
+            download_url,
+            {"User-Agent": "curl/8.0.1", "Connection": "close"},
+            debug,
+            "PT 下载免登录",
         )
-    return data
+        try:
+            validate_torrent_data(torrent_id, data)
+            if debug:
+                typer.echo(f"[DEBUG] PT 种子 bencode 校验通过: torrent_id={torrent_id}")
+            return data
+        except BencodeError as exc:
+            last_error = exc
+            if debug:
+                typer.echo(f"[DEBUG] PT 种子 bencode 校验失败: {get_exception_message(exc)}")
+            if attempt > max_retries:
+                break
+    raise RuntimeError(f"下载 PT 种子失败: 返回内容不是有效的 torrent 文件: {get_exception_message(last_error)}")
 
 
 def get_current_yemapt_user_id() -> str | None:

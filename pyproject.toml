@@ -1,6 +1,6 @@
 [project]
 name = "yema"
-version = "0.1.8"
+version = "0.1.9"
 description = "yemapt/qBittorrent helper for seeding and torrent checks"
 readme = "README.md"
 requires-python = ">=3.9"

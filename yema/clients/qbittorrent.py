@@ -4,6 +4,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Any, Dict, List
 
 import typer
@@ -206,7 +207,7 @@ def add_qb_torrent(
     debug = is_debug_enabled()
     host = host.rstrip("/")
     url = f"{host}/api/v2/torrents/add"
-    boundary = "----yema-boundary"
+    boundary = f"----yema-{uuid.uuid4().hex}"
     body = bytearray()
 
     def add_text_field(name: str, value: str) -> None:
@@ -223,7 +224,11 @@ def add_qb_torrent(
     add_text_field("savepath", save_path)
     add_text_field("skip_checking", "true")
     body.extend(f"--{boundary}--\r\n".encode("utf-8"))
-    request_headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    request_headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Accept": "text/plain, */*",
+        "User-Agent": "python-urllib/3",
+    }
     if debug:
         typer.echo(f"[DEBUG] 添加 qB 种子保存路径: {save_path}")
         typer.echo(f"[DEBUG] 添加 qB 种子 skip_checking: true")
@@ -251,12 +256,12 @@ def add_qb_torrent(
                     response_body=response_body,
                 )
     except urllib.error.HTTPError as exc:
-        if debug:
+        error_body = ""
+        try:
+            error_body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
             error_body = ""
-            try:
-                error_body = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                error_body = ""
+        if debug:
             debug_http_dump(
                 "qB 添加",
                 method="POST",
@@ -267,6 +272,9 @@ def add_qb_torrent(
                 response_body=error_body,
                 error=exc,
             )
+        detail = error_body.strip()
+        if detail:
+            raise RuntimeError(f"添加 qB 种子失败: {exc.code} {exc.reason}: {detail}")
         raise RuntimeError(f"添加 qB 种子失败: {exc.code} {exc.reason}")
     except urllib.error.URLError as exc:
         if debug:
