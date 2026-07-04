@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import typer
 
 from .config import config_app
@@ -41,8 +43,8 @@ def tr():
 
 @app.command()
 def pub(
-    client: str | None = typer.Option(None, "--client", help="只处理指定客户端：qb 或 tr。"),
-    tracker: str | None = typer.Option(None, "--tracker", help="只处理匹配指定 tracker 的种子。"),
+    client: Optional[str] = typer.Option(None, "--client", help="只处理指定客户端：qb 或 tr。"),
+    tracker: Optional[str] = typer.Option(None, "--tracker", help="只处理匹配指定 tracker 的种子。"),
     urls: bool = typer.Option(False, "--urls", help="直接输出可解析出的详情页 URL，每行一个。"),
 ):
     """列出下载软件上不在 PT 站点的种子。"""
@@ -64,8 +66,8 @@ def tr_check():
 @app.command()
 def seed(
     yes: bool = typer.Option(False, "--yes", "-y", help="自动确认并执行所有补种操作。"),
-    client: str | None = typer.Option(None, "--client", help="只处理指定客户端：qb 或 tr。"),
-    tracker: str | None = typer.Option(None, "--tracker", help="只处理匹配指定 tracker 的种子。"),
+    client: Optional[str] = typer.Option(None, "--client", help="只处理指定客户端：qb 或 tr。"),
+    tracker: Optional[str] = typer.Option(None, "--tracker", help="只处理匹配指定 tracker 的种子。"),
 ):
     """补种未做种或非当前用户做种的 PT 种子。"""
     seed_torrents(yes=yes, client=client, tracker=tracker)
