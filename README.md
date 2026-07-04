@@ -100,7 +100,7 @@ yema qb
 yema check
 ```
 
-如果同时配置了 qBittorrent 和 Transmission，`check`、`seed`、`pub` 会先让你选择来源，默认是全部。
+如果同时配置了 qBittorrent 和 Transmission，`check`、`pub` 会先让你选择来源，默认是全部。`seed -y` 会自动处理全部来源；如需限制 `seed` 来源，可使用 `--client qb` 或 `--client tr`。
 
 辅助保种：
 
@@ -108,7 +108,18 @@ yema check
 yema seed
 ```
 
-`seed` 会分析 qBittorrent 中的种子，找出已被 yemapt 收录但当前用户未做种的项目。执行前会逐个确认，不会自动批量修改。
+`seed` 会分析 qBittorrent 中的种子，找出已被 yemapt 收录但当前用户未做种的项目。默认执行前会逐个确认，不会自动批量修改。如需自动确认所有候选项，可使用：
+
+```bash
+yema seed -y
+```
+
+只处理指定下载软件：
+
+```bash
+yema seed --client qb
+yema seed --client tr
+```
 
 辅助转种：
 

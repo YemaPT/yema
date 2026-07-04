@@ -58,7 +58,18 @@ def _has_transmission_config(settings: Dict[str, Any]) -> bool:
     return isinstance(tr, dict) and bool(tr.get("host") and tr.get("filesystem"))
 
 
-def _select_sources(command_name: str) -> List[str]:
+def _normalize_source_client(client: str | None) -> str | None:
+    if client is None:
+        return None
+    value = client.strip().lower()
+    if value in {"qb", "qbittorrent"}:
+        return "qb"
+    if value in {"tr", "transmission"}:
+        return "tr"
+    raise typer.Exit(code=1, message="--client 仅支持 qb 或 tr。")
+
+
+def _select_sources(command_name: str, client: str | None = None, auto_all: bool = False) -> List[str]:
     settings = load_settings()
     configured = []
     if _has_qb_config(settings):
@@ -68,7 +79,17 @@ def _select_sources(command_name: str) -> List[str]:
 
     if not configured:
         raise typer.Exit(code=1, message="未配置下载软件，请先运行 yema init 设置 qBittorrent 或 Transmission。")
+
+    selected_client = _normalize_source_client(client)
+    if selected_client:
+        if selected_client not in configured:
+            label = "qBittorrent" if selected_client == "qb" else "Transmission"
+            raise typer.Exit(code=1, message=f"未配置 {label}，请先运行 yema init 设置。")
+        return [selected_client]
+
     if len(configured) == 1:
+        return configured
+    if auto_all:
         return configured
 
     selected = 0
@@ -148,9 +169,9 @@ def _get_transmission_context() -> Dict[str, Any]:
     }
 
 
-def _get_source_contexts(command_name: str) -> List[Dict[str, Any]]:
+def _get_source_contexts(command_name: str, client: str | None = None, auto_all: bool = False) -> List[Dict[str, Any]]:
     contexts = []
-    for source in _select_sources(command_name):
+    for source in _select_sources(command_name, client=client, auto_all=auto_all):
         if source == "qb":
             contexts.append(_get_qb_context())
         elif source == "tr":
@@ -405,9 +426,9 @@ def check_torrents():
     show_check_results(sorted(results, key=get_check_result_sort_key))
 
 
-def seed_torrents():
+def seed_torrents(yes: bool = False, client: str | None = None):
     _ensure_yemapt_auth()
-    contexts = _get_source_contexts("seed")
+    contexts = _get_source_contexts("seed", client=client, auto_all=yes)
 
     clear_screen()
     typer.echo("正在分析可补种项目...\n")
@@ -480,7 +501,9 @@ def seed_torrents():
         if item["replace_info_hashes"]:
             typer.echo(f"  待删除 infohash: {', '.join(item['replace_info_hashes'])}")
 
-        if not typer.confirm("是否执行该操作？", default=False):
+        if yes:
+            typer.echo("  自动确认: 是")
+        elif not typer.confirm("是否执行该操作？", default=False):
             if debug:
                 typer.echo(f"[DEBUG] 用户跳过候选: {item['name']}")
             typer.echo("已跳过。")

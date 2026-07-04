@@ -56,9 +56,12 @@ def tr_check():
 
 
 @app.command()
-def seed():
+def seed(
+    yes: bool = typer.Option(False, "--yes", "-y", help="自动确认并执行所有补种操作。"),
+    client: str | None = typer.Option(None, "--client", "-client", help="只处理指定客户端：qb 或 tr。"),
+):
     """补种未做种或非当前用户做种的 PT 种子。"""
-    seed_torrents()
+    seed_torrents(yes=yes, client=client)
 
 
 def main() -> int:
