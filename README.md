@@ -119,15 +119,24 @@ yema seed -y
 ```bash
 yema seed --client qb
 yema seed --client tr
+yema seed --client qb --tracker mteam
 ```
 
 辅助转种：
 
 ```bash
 yema pub
+yema pub --client qb
+yema pub --client tr
+yema pub --urls --client qb
+yema pub --urls --client qb --tracker mteam
 ```
 
-`pub` 会列出 qBittorrent 中尚未被 yemapt 收录的种子，并显示 tracker 来源。对于部分站点，工具会尝试解析并展示详情页 URL，方便手动转种。
+`pub` 会列出下载软件中尚未被 yemapt 收录的种子，并显示 tracker 来源。对于部分站点，工具会尝试解析并展示详情页 URL，方便手动转种。
+
+加上 `--urls` 后，`pub` 只处理已下载完成的种子，并直接输出可解析出的详情页 URL，每行一个，方便交给下一个程序处理。可用 `--client qb` 或 `--client tr` 限制来源。交互式列表会显示下载状态，未完成的种子不会生成详情页 URL。
+
+`seed` 和 `pub` 都支持 `--tracker` 筛选。筛选值会匹配 tracker URL、tracker 域名和内置显示名，例如 `--tracker mteam` 或 `--tracker tracker.m-team.cc`。
 
 Transmission：
 
