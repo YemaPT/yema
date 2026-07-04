@@ -69,6 +69,7 @@ PYTHONPYCACHEPREFIX=/tmp/yema_pycache uv run python -m compileall yema
 - 新客户端不要直接耦合 qBittorrent 专用 helper。
 - 除非任务明确要求，否则保持现有 CLI 行为不变。
 - 面向终端用户的错误信息使用简洁中文，风格与现有代码保持一致。
+- 项目支持 Python 3.9；新增或修改包含 `X | Y`、`str | None` 等 PEP 604 类型注解的模块时，必须添加 `from __future__ import annotations`，否则请使用 `typing.Optional` / `typing.Union`。
 
 下载软件集成约定：
 
