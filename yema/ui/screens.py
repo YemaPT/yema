@@ -284,6 +284,16 @@ def _format_tracker_domains(domains: list[str]) -> str:
     return ", ".join(get_tracker_display_name(d) for d in domains) if domains else "-"
 
 
+def _format_pub_status(item: Dict[str, Any]) -> str:
+    if item.get("is_completed"):
+        return "已完成"
+    try:
+        progress = float(item.get("progress", 0)) * 100
+    except (TypeError, ValueError):
+        return "下载中"
+    return f"下载中 {progress:.1f}%"
+
+
 def show_pub_results(results: List[Dict[str, Any]]) -> None:
     """Show pub results with pagination"""
     page = 0
@@ -297,9 +307,10 @@ def show_pub_results(results: List[Dict[str, Any]]) -> None:
 
         width = get_terminal_width()
         source_width = 6
-        name_width = max(20, min(60, width - 50))
+        status_width = 12
+        name_width = max(20, min(60, width - 62))
         size_width = 12
-        tracker_width = max(15, width - name_width - size_width - source_width - 5)
+        tracker_width = max(15, width - name_width - size_width - source_width - status_width - 6)
 
         clear_screen()
         typer.echo("不在 PT 站点的种子\n")
@@ -307,10 +318,11 @@ def show_pub_results(results: List[Dict[str, Any]]) -> None:
             pad_display("来源", source_width) + " "
             + pad_display("名称", name_width) + " "
             + pad_display("大小", size_width) + " "
+            + pad_display("状态", status_width) + " "
             + "Tracker"
         )
         typer.echo(header)
-        typer.echo("-" * min(width, name_width + size_width + source_width + tracker_width + 5))
+        typer.echo("-" * min(width, name_width + size_width + source_width + status_width + tracker_width + 6))
 
         for i, item in enumerate(page_items):
             source = pad_display(str(item.get("source", "-")), source_width)
@@ -318,9 +330,11 @@ def show_pub_results(results: List[Dict[str, Any]]) -> None:
             name_field = pad_display(name, name_width)
             size = format_bytes(item["size"])
             size_field = pad_display(size, size_width)
+            status = truncate_display(_format_pub_status(item), status_width)
+            status_field = pad_display(status, status_width)
             trackers = _format_tracker_domains(item["tracker_domains"])
             trackers = truncate_display(trackers, tracker_width)
-            row = f"{source} {name_field} {size_field} {trackers}"
+            row = f"{source} {name_field} {size_field} {status_field} {trackers}"
 
             if i == selected:
                 typer.echo(f"\x1b[7m{row}\x1b[0m")
@@ -328,8 +342,12 @@ def show_pub_results(results: List[Dict[str, Any]]) -> None:
                 typer.echo(row)
 
         typer.echo("")
-        has_detail = bool(results[page * page_size + selected].get("detail_url")) if results else False
+        current = results[page * page_size + selected] if results else {}
+        has_detail = bool(current.get("detail_url"))
+        downloading = bool(current) and not current.get("is_completed")
         hint = "Enter 打开详情, " if has_detail else ""
+        if downloading:
+            hint = "下载中，无法生成详情 URL, " + hint
         typer.echo(f"当前 {page + 1}/{total_pages}  总数 {len(results)}  ({hint}↑ ↓ 选择，← → 翻页，Esc 退出)")
 
         key = read_key()

@@ -100,7 +100,7 @@ yema qb
 yema check
 ```
 
-如果同时配置了 qBittorrent 和 Transmission，`check`、`seed`、`pub` 会先让你选择来源，默认是全部。
+如果同时配置了 qBittorrent 和 Transmission，`check`、`pub` 会先让你选择来源，默认是全部。`seed -y` 会自动处理全部来源；如需限制 `seed` 来源，可使用 `--client qb` 或 `--client tr`。
 
 辅助保种：
 
@@ -108,15 +108,35 @@ yema check
 yema seed
 ```
 
-`seed` 会分析 qBittorrent 中的种子，找出已被 yemapt 收录但当前用户未做种的项目。执行前会逐个确认，不会自动批量修改。
+`seed` 会分析 qBittorrent 中的种子，找出已被 yemapt 收录但当前用户未做种的项目。默认执行前会逐个确认，不会自动批量修改。如需自动确认所有候选项，可使用：
+
+```bash
+yema seed -y
+```
+
+只处理指定下载软件：
+
+```bash
+yema seed --client qb
+yema seed --client tr
+yema seed --client qb --tracker mteam
+```
 
 辅助转种：
 
 ```bash
 yema pub
+yema pub --client qb
+yema pub --client tr
+yema pub --urls --client qb
+yema pub --urls --client qb --tracker mteam
 ```
 
-`pub` 会列出 qBittorrent 中尚未被 yemapt 收录的种子，并显示 tracker 来源。对于部分站点，工具会尝试解析并展示详情页 URL，方便手动转种。
+`pub` 会列出下载软件中尚未被 yemapt 收录的种子，并显示 tracker 来源。对于部分站点，工具会尝试解析并展示详情页 URL，方便手动转种。
+
+加上 `--urls` 后，`pub` 只处理已下载完成的种子，并直接输出可解析出的详情页 URL，每行一个，方便交给下一个程序处理。可用 `--client qb` 或 `--client tr` 限制来源。交互式列表会显示下载状态，未完成的种子不会生成详情页 URL。
+
+`seed` 和 `pub` 都支持 `--tracker` 筛选。筛选值会匹配 tracker URL、tracker 域名和内置显示名，例如 `--tracker mteam` 或 `--tracker tracker.m-team.cc`。
 
 Transmission：
 

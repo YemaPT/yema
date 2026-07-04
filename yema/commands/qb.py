@@ -29,7 +29,7 @@ from yema.config.utils import is_debug_enabled, load_settings
 from yema.core.debug import get_exception_message
 from yema.core.formatting import render_page
 from yema.core.terminal import clear_screen, read_key
-from yema.domain.trackers import extract_domain_from_url
+from yema.domain.trackers import extract_domain_from_url, get_tracker_display_name
 from yema.services.torrents import (
     collect_pt_check_results,
     deduplicate_torrents_by_pieces_hash,
@@ -58,7 +58,47 @@ def _has_transmission_config(settings: Dict[str, Any]) -> bool:
     return isinstance(tr, dict) and bool(tr.get("host") and tr.get("filesystem"))
 
 
-def _select_sources(command_name: str) -> List[str]:
+def _normalize_source_client(client: str | None) -> str | None:
+    if client is None:
+        return None
+    value = client.strip().lower()
+    if value in {"qb", "qbittorrent"}:
+        return "qb"
+    if value in {"tr", "transmission"}:
+        return "tr"
+    raise typer.Exit(code=1, message="--client 仅支持 qb 或 tr。")
+
+
+def _matches_tracker(tracker_url: str, tracker: str) -> bool:
+    target = tracker.strip().lower()
+    if not target:
+        return True
+    url = tracker_url.lower()
+    domain = extract_domain_from_url(tracker_url).lower()
+    display_name = get_tracker_display_name(domain).lower()
+    return target in url or target in domain or target in display_name
+
+
+def _filter_torrents_by_tracker(
+    torrents: List[Dict[str, Any]],
+    tracker: str | None,
+    tracker_url_fetcher: Any,
+) -> List[Dict[str, Any]]:
+    if not tracker or not tracker.strip():
+        return torrents
+
+    matched = []
+    for torrent in torrents:
+        try:
+            tracker_urls = tracker_url_fetcher(torrent)
+        except Exception:
+            tracker_urls = []
+        if any(_matches_tracker(url, tracker) for url in tracker_urls):
+            matched.append(torrent)
+    return matched
+
+
+def _select_sources(command_name: str, client: str | None = None, auto_all: bool = False) -> List[str]:
     settings = load_settings()
     configured = []
     if _has_qb_config(settings):
@@ -68,7 +108,17 @@ def _select_sources(command_name: str) -> List[str]:
 
     if not configured:
         raise typer.Exit(code=1, message="未配置下载软件，请先运行 yema init 设置 qBittorrent 或 Transmission。")
+
+    selected_client = _normalize_source_client(client)
+    if selected_client:
+        if selected_client not in configured:
+            label = "qBittorrent" if selected_client == "qb" else "Transmission"
+            raise typer.Exit(code=1, message=f"未配置 {label}，请先运行 yema init 设置。")
+        return [selected_client]
+
     if len(configured) == 1:
+        return configured
+    if auto_all:
         return configured
 
     selected = 0
@@ -148,9 +198,9 @@ def _get_transmission_context() -> Dict[str, Any]:
     }
 
 
-def _get_source_contexts(command_name: str) -> List[Dict[str, Any]]:
+def _get_source_contexts(command_name: str, client: str | None = None, auto_all: bool = False) -> List[Dict[str, Any]]:
     contexts = []
-    for source in _select_sources(command_name):
+    for source in _select_sources(command_name, client=client, auto_all=auto_all):
         if source == "qb":
             contexts.append(_get_qb_context())
         elif source == "tr":
@@ -265,26 +315,47 @@ def qb_command():
             continue
 
 
-def pub_torrents():
-    """列出下载软件上不在 PT 站点的种子"""
+def _is_torrent_completed(torrent: Dict[str, Any]) -> bool:
+    try:
+        return float(torrent.get("progress", 0)) >= 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _collect_pub_torrents(
+    client: str | None = None,
+    tracker: str | None = None,
+    progress_to_stderr: bool = False,
+    completed_only: bool = False,
+) -> List[Dict[str, Any]]:
     _ensure_yemapt_auth()
-    contexts = _get_source_contexts("pub")
+    contexts = _get_source_contexts("pub", client=client)
     debug = is_debug_enabled()
     not_on_pt = []
 
     for context in contexts:
         torrents = context["torrents"]
+        torrents = _filter_torrents_by_tracker(torrents, tracker, context["tracker_url_fetcher"])
+        if completed_only:
+            torrents = [torrent for torrent in torrents if _is_torrent_completed(torrent)]
         if not torrents:
-            typer.echo(f"{context['source']} 当前没有种子。")
+            if tracker and tracker.strip():
+                empty_text = f"当前没有匹配 tracker={tracker} 的种子"
+            elif completed_only:
+                empty_text = "当前没有已下载完成的种子"
+            else:
+                empty_text = "当前没有种子"
+            typer.echo(f"{context['source']} {empty_text}。", err=progress_to_stderr)
             continue
 
-        print(f"获取 {context['source']} pieces hash...")
+        typer.echo(f"获取 {context['source']} pieces hash...", err=progress_to_stderr)
         pieces_hashes = fetch_all_torrents_pieces_hashes(
             context["opener"],
             context["host"],
             torrents,
             context.get("pieces_hash_resolver"),
             debug,
+            progress_to_stderr,
         )
 
         to_query = []
@@ -300,7 +371,11 @@ def pub_torrents():
             batch_count = (len(to_query) + 99) // 100
             for batch_idx, i in enumerate(range(0, len(to_query), 100), 1):
                 batch = to_query[i : i + 100]
-                print(f"\r查询 PT 站点... {min(i + 100, len(to_query))}/{len(to_query)}", end="", flush=True)
+                typer.echo(
+                    f"\r查询 PT 站点... {min(i + 100, len(to_query))}/{len(to_query)}",
+                    nl=False,
+                    err=progress_to_stderr,
+                )
                 try:
                     batch_result = fetch_torrent_ids_from_pt(batch, debug=debug)
                     pt_results.update(batch_result)
@@ -311,7 +386,7 @@ def pub_torrents():
                 except Exception as e:
                     if debug:
                         typer.echo(f"[DEBUG] 批次 {batch_idx}/{batch_count} 查询失败: {e}")
-            print()
+            typer.echo("", err=progress_to_stderr)
 
         for torrent in torrents:
             info_hash = torrent.get("hash")
@@ -343,17 +418,41 @@ def pub_torrents():
             except Exception:
                 pass
 
+            is_completed = _is_torrent_completed(torrent)
             detail_url = None
-            if context["source"] == "qb":
+            if is_completed:
                 detail_url = get_torrent_detail_url(context["opener"], context["host"], info_hash, tracker_urls)
 
             not_on_pt.append({
                 "source": context["source"],
                 "name": torrent.get("name", "<unknown>"),
                 "size": torrent.get("size", 0),
+                "progress": torrent.get("progress", 0),
+                "is_completed": is_completed,
                 "tracker_domains": tracker_domains,
                 "detail_url": detail_url,
             })
+
+    return not_on_pt
+
+
+def pub_torrents(client: str | None = None, urls: bool = False, tracker: str | None = None):
+    """列出下载软件上不在 PT 站点的种子"""
+    not_on_pt = _collect_pub_torrents(
+        client=client,
+        tracker=tracker,
+        progress_to_stderr=urls,
+        completed_only=urls,
+    )
+    if urls:
+        seen = set()
+        for item in not_on_pt:
+            detail_url = item.get("detail_url")
+            if not detail_url or detail_url in seen:
+                continue
+            seen.add(detail_url)
+            typer.echo(detail_url)
+        return
 
     if not not_on_pt:
         typer.echo("所有种子都在 PT 站点上。")
@@ -405,9 +504,9 @@ def check_torrents():
     show_check_results(sorted(results, key=get_check_result_sort_key))
 
 
-def seed_torrents():
+def seed_torrents(yes: bool = False, client: str | None = None, tracker: str | None = None):
     _ensure_yemapt_auth()
-    contexts = _get_source_contexts("seed")
+    contexts = _get_source_contexts("seed", client=client, auto_all=yes)
 
     clear_screen()
     typer.echo("正在分析可补种项目...\n")
@@ -416,8 +515,12 @@ def seed_torrents():
     context_by_source = {context["source"]: context for context in contexts}
     for context in contexts:
         torrents = context["torrents"]
+        torrents = _filter_torrents_by_tracker(torrents, tracker, context["tracker_url_fetcher"])
         if not torrents:
-            typer.echo(f"{context['source']} 当前没有种子。")
+            if tracker and tracker.strip():
+                typer.echo(f"{context['source']} 当前没有匹配 tracker={tracker} 的种子。")
+            else:
+                typer.echo(f"{context['source']} 当前没有种子。")
             continue
         if debug:
             typer.echo("[DEBUG] seed 流程开始")
@@ -480,7 +583,9 @@ def seed_torrents():
         if item["replace_info_hashes"]:
             typer.echo(f"  待删除 infohash: {', '.join(item['replace_info_hashes'])}")
 
-        if not typer.confirm("是否执行该操作？", default=False):
+        if yes:
+            typer.echo("  自动确认: 是")
+        elif not typer.confirm("是否执行该操作？", default=False):
             if debug:
                 typer.echo(f"[DEBUG] 用户跳过候选: {item['name']}")
             typer.echo("已跳过。")

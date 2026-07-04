@@ -1,0 +1,87 @@
+name: Publish to PyPI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - pyproject.toml
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version.outputs.changed }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check project version changed
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+
+          def read_version(data: bytes) -> str:
+              return str(tomllib.loads(data.decode("utf-8"))["project"]["version"])
+
+
+          new_version = read_version(Path("pyproject.toml").read_bytes())
+          old_version = None
+          before_sha = os.environ.get("BEFORE_SHA", "")
+
+          if before_sha and set(before_sha) != {"0"}:
+              try:
+                  old_data = subprocess.check_output(
+                      ["git", "show", f"{before_sha}:pyproject.toml"],
+                      stderr=subprocess.DEVNULL,
+                  )
+                  old_version = read_version(old_data)
+              except Exception:
+                  old_version = None
+
+          changed = old_version != new_version
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={new_version}\n")
+              output.write(f"changed={str(changed).lower()}\n")
+
+          print(f"old version: {old_version or '<none>'}")
+          print(f"new version: {new_version}")
+          print(f"version changed: {changed}")
+          PY
+
+  publish:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build package
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@release/v1

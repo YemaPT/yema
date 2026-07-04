@@ -38,9 +38,13 @@ def tr():
 
 
 @app.command()
-def pub():
+def pub(
+    client: str | None = typer.Option(None, "--client", help="只处理指定客户端：qb 或 tr。"),
+    tracker: str | None = typer.Option(None, "--tracker", help="只处理匹配指定 tracker 的种子。"),
+    urls: bool = typer.Option(False, "--urls", help="直接输出可解析出的详情页 URL，每行一个。"),
+):
     """列出下载软件上不在 PT 站点的种子。"""
-    pub_torrents()
+    pub_torrents(client=client, urls=urls, tracker=tracker)
 
 
 @app.command()
@@ -56,9 +60,13 @@ def tr_check():
 
 
 @app.command()
-def seed():
+def seed(
+    yes: bool = typer.Option(False, "--yes", "-y", help="自动确认并执行所有补种操作。"),
+    client: str | None = typer.Option(None, "--client", help="只处理指定客户端：qb 或 tr。"),
+    tracker: str | None = typer.Option(None, "--tracker", help="只处理匹配指定 tracker 的种子。"),
+):
     """补种未做种或非当前用户做种的 PT 种子。"""
-    seed_torrents()
+    seed_torrents(yes=yes, client=client, tracker=tracker)
 
 
 def main() -> int:
