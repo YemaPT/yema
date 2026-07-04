@@ -32,7 +32,7 @@ from yema.storage.cache import (
 )
 
 def get_torrent_detail_url(
-    opener: urllib.request.OpenerDirector,
+    opener: urllib.request.OpenerDirector | None,
     host: str,
     info_hash: str,
     tracker_urls: List[str],
@@ -54,18 +54,19 @@ def get_torrent_detail_url(
         save_qb_torrent_cache(cache)
         return url
 
-    try:
-        properties = fetch_qb_torrent_properties(opener, host, info_hash)
-        comment = properties.get("comment", "")
-        url = _parse_hhanclub_detail_url(comment)
-        if url:
-            entry = cache.get(info_hash, {})
-            entry["detailUrl"] = url
-            cache[info_hash] = entry
-            save_qb_torrent_cache(cache)
-            return url
-    except Exception:
-        pass
+    if opener is not None:
+        try:
+            properties = fetch_qb_torrent_properties(opener, host, info_hash)
+            comment = properties.get("comment", "")
+            url = _parse_hhanclub_detail_url(comment)
+            if url:
+                entry = cache.get(info_hash, {})
+                entry["detailUrl"] = url
+                cache[info_hash] = entry
+                save_qb_torrent_cache(cache)
+                return url
+        except Exception:
+            pass
 
     entry = cache.get(info_hash, {})
     entry["detailUrl"] = ""
@@ -80,6 +81,7 @@ def fetch_all_torrents_pieces_hashes(
     torrents: List[Dict[str, Any]],
     pieces_hash_resolver: Callable[[Dict[str, Any]], str] | None = None,
     debug: bool = False,
+    progress_to_stderr: bool = False,
 ) -> Dict[str, str]:
     """
     Fetch pieces hashes for all torrents, using cache when available.
@@ -89,7 +91,7 @@ def fetch_all_torrents_pieces_hashes(
     total = len(torrents)
     
     for idx, torrent in enumerate(torrents):
-        print(f"\r处理中... {idx + 1}/{total}", end="", flush=True)
+        typer.echo(f"\r处理中... {idx + 1}/{total}", nl=False, err=progress_to_stderr)
         info_hash = torrent.get("hash")
         if not info_hash:
             if debug:
@@ -140,7 +142,7 @@ def fetch_all_torrents_pieces_hashes(
             if debug:
                 typer.echo(f"[DEBUG] pieces hash 完成: info_hash={info_hash}, pieces_hash={pieces_hash}")
     
-    print()  # 完成后换行
+    typer.echo("", err=progress_to_stderr)  # 完成后换行
     return result
 
 
