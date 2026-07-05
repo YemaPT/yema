@@ -27,12 +27,18 @@ curl -fsSL https://raw.githubusercontent.com/YemaPT/yema/main/install.sh | sh
 ./install.sh
 ```
 
-脚本会使用当前 Python 的用户目录安装，并在 `yema` 不在 `PATH` 时自动写入当前 shell 的 profile。
+脚本默认使用当前 Python 的用户目录安装，并在 `yema` 不在 `PATH` 时自动写入当前 shell 的 profile。部分 Linux 发行版禁止 `pip --user` 安装系统 Python 包；这种情况下脚本会尝试使用 `pipx` 安装。
 
 从 PyPI 安装：
 
 ```bash
 pip install yema
+```
+
+如果 Linux 环境提示 Python 由系统管理，建议使用 `pipx`：
+
+```bash
+pipx install yema
 ```
 
 如果使用 `uv`：

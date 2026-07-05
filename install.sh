@@ -12,6 +12,10 @@ error() {
     printf 'error: %s\n' "$*" >&2
 }
 
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
 detect_shell_rc() {
     shell_name="$(basename "${SHELL:-}")"
     case "$shell_name" in
@@ -54,7 +58,7 @@ ensure_path_entry() {
 
 find_python() {
     if [ "${PYTHON:-}" ]; then
-        command -v "$PYTHON" >/dev/null 2>&1 || {
+        command_exists "$PYTHON" || {
             error "PYTHON is set to '$PYTHON', but it was not found"
             exit 1
         }
@@ -63,7 +67,7 @@ find_python() {
     fi
 
     for candidate in python3 python; do
-        if command -v "$candidate" >/dev/null 2>&1; then
+        if command_exists "$candidate"; then
             printf '%s\n' "$candidate"
             return
         fi
@@ -71,6 +75,44 @@ find_python() {
 
     error "Python ${MIN_PYTHON}+ is required, but python3 was not found"
     exit 1
+}
+
+find_pipx_bin_dir() {
+    if [ "${PIPX_BIN_DIR:-}" ]; then
+        printf '%s\n' "$PIPX_BIN_DIR"
+        return
+    fi
+
+    if command_exists pipx; then
+        pipx_bin_dir="$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || true)"
+        if [ "$pipx_bin_dir" ]; then
+            printf '%s\n' "$pipx_bin_dir"
+            return
+        fi
+    fi
+
+    printf '%s\n' "$HOME/.local/bin"
+}
+
+install_with_pip() {
+    info "Installing $install_spec with $python_bin..."
+    "$python_bin" -m pip install --upgrade --user "$install_spec"
+    script_dir="$("$python_bin" -m site --user-base)/bin"
+}
+
+install_with_pipx() {
+    if ! command_exists pipx; then
+        error "pip user install failed, and pipx was not found"
+        info "On Linux distributions with externally managed Python, install pipx first, then rerun this installer."
+        info "For example:"
+        info "  sudo apt install pipx"
+        info "  pipx ensurepath"
+        exit 1
+    fi
+
+    info "Installing $install_spec with pipx..."
+    pipx install --python "$python_bin" --force "$install_spec"
+    script_dir="$(find_pipx_bin_dir)"
 }
 
 python_bin="$(find_python)"
@@ -99,10 +141,16 @@ if [ -z "$install_spec" ]; then
     fi
 fi
 
-info "Installing $install_spec with $python_bin..."
-"$python_bin" -m pip install --upgrade --user "$install_spec"
+if ! install_with_pip; then
+    if [ "$(uname -s 2>/dev/null || true)" != "Linux" ]; then
+        exit 1
+    fi
 
-script_dir="$("$python_bin" -m site --user-base)/bin"
+    info ""
+    info "pip user install failed on Linux; trying pipx..."
+    install_with_pipx
+fi
+
 script_path="$script_dir/$PACKAGE_NAME"
 
 if [ ! -x "$script_path" ]; then
