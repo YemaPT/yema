@@ -126,7 +126,10 @@ yema seed -y
 yema seed --client qb
 yema seed --client tr
 yema seed --client qb --tracker mteam
+yema seed --client qb --category=保种
 ```
+
+使用 `--category` 可以为 `seed` 新添加到 qBittorrent 的种子设置类目；Transmission 不支持此选项对应的类目功能。
 
 辅助转种：
 

@@ -68,9 +68,10 @@ def seed(
     yes: bool = typer.Option(False, "--yes", "-y", help="自动确认并执行所有补种操作。"),
     client: Optional[str] = typer.Option(None, "--client", help="只处理指定客户端：qb 或 tr。"),
     tracker: Optional[str] = typer.Option(None, "--tracker", help="只处理匹配指定 tracker 的种子。"),
+    category: Optional[str] = typer.Option(None, "--category", help="为新添加的 qBittorrent 种子设置类目。"),
 ):
     """补种未做种或非当前用户做种的 PT 种子。"""
-    seed_torrents(yes=yes, client=client, tracker=tracker)
+    seed_torrents(yes=yes, client=client, tracker=tracker, category=category)
 
 
 def main() -> int:

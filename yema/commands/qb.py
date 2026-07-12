@@ -160,7 +160,9 @@ def _get_qb_context() -> Dict[str, Any]:
         "tracker_url_fetcher": lambda torrent: fetch_cached_qb_torrent_tracker_urls(opener, qb["host"], torrent.get("hash")),
         "get_save_path": lambda torrent: get_torrent_save_path(opener, qb["host"], torrent),
         "delete": lambda info_hashes: delete_qb_torrents(opener, qb["host"], info_hashes),
-        "add": lambda torrent_data, save_path: add_qb_torrent(opener, qb["host"], torrent_data, save_path),
+        "add": lambda torrent_data, save_path, category=None: add_qb_torrent(
+            opener, qb["host"], torrent_data, save_path, category=category
+        ),
     }
 
 
@@ -194,7 +196,7 @@ def _get_transmission_context() -> Dict[str, Any]:
         "tracker_url_fetcher": fetch_transmission_torrent_tracker_urls,
         "get_save_path": lambda torrent: str(torrent.get("save_path") or ""),
         "delete": lambda info_hashes: delete_transmission_torrents(client, info_hashes),
-        "add": lambda torrent_data, save_path: add_transmission_torrent(client, torrent_data, save_path),
+        "add": lambda torrent_data, save_path, category=None: add_transmission_torrent(client, torrent_data, save_path),
     }
 
 
@@ -504,7 +506,12 @@ def check_torrents():
     show_check_results(sorted(results, key=get_check_result_sort_key))
 
 
-def seed_torrents(yes: bool = False, client: str | None = None, tracker: str | None = None):
+def seed_torrents(
+    yes: bool = False,
+    client: str | None = None,
+    tracker: str | None = None,
+    category: str | None = None,
+):
     _ensure_yemapt_auth()
     contexts = _get_source_contexts("seed", client=client, auto_all=yes)
 
@@ -580,6 +587,8 @@ def seed_torrents(yes: bool = False, client: str | None = None, tracker: str | N
         typer.echo(f"  当前做种: {item['seed_display']}")
         typer.echo(f"  做种用户: {seed_user}")
         typer.echo(f"  保存路径: {save_path}")
+        if category and item["source"] == "qb":
+            typer.echo(f"  类目: {category}")
         if item["replace_info_hashes"]:
             typer.echo(f"  待删除 infohash: {', '.join(item['replace_info_hashes'])}")
 
@@ -607,7 +616,7 @@ def seed_torrents(yes: bool = False, client: str | None = None, tracker: str | N
                 typer.echo("已删除旧的做种条目（保留文件）。")
             if debug:
                 typer.echo(f"[DEBUG] 开始向 {item['source']} 添加新种: {item['name']}")
-            context["add"](torrent_data, save_path)
+            context["add"](torrent_data, save_path, category)
             if debug:
                 typer.echo(f"[DEBUG] {item['source']} 添加新种完成: {item['name']}")
             typer.echo(f"已完成: {seed_action}")

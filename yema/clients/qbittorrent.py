@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import http.cookiejar
 import json
 import time
@@ -203,6 +205,7 @@ def add_qb_torrent(
     host: str,
     torrent_data: bytes,
     save_path: str,
+    category: str | None = None,
 ) -> None:
     debug = is_debug_enabled()
     host = host.rstrip("/")
@@ -223,6 +226,8 @@ def add_qb_torrent(
     body.extend(b"\r\n")
     add_text_field("savepath", save_path)
     add_text_field("skip_checking", "true")
+    if category:
+        add_text_field("category", category)
     body.extend(f"--{boundary}--\r\n".encode("utf-8"))
     request_headers = {
         "Content-Type": f"multipart/form-data; boundary={boundary}",
@@ -232,6 +237,8 @@ def add_qb_torrent(
     if debug:
         typer.echo(f"[DEBUG] 添加 qB 种子保存路径: {save_path}")
         typer.echo(f"[DEBUG] 添加 qB 种子 skip_checking: true")
+        if category:
+            typer.echo(f"[DEBUG] 添加 qB 种子类目: {category}")
         typer.echo(f"[DEBUG] 添加 qB 种子文件字节数: {len(torrent_data)}")
         typer.echo(f"[DEBUG] 添加 qB 请求体字节数: {len(body)}")
         debug_http_dump("qB 添加", method="POST", url=url, headers=request_headers, body=bytes(body))
