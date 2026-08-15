@@ -38,7 +38,7 @@ def config(ctx: Context):
     tr = clients.get("transmission", {}) if isinstance(clients, dict) else {}
     typer.echo("当前配置：")
     typer.echo(
-        f"  yemapt auth: {format_secret(y.get('auth') or settings.get('yemapt_auth'))}"
+        f"  yemapt API AuthKey: {format_secret(y.get('auth') or settings.get('yemapt_auth'))}"
     )
     typer.echo(
         f"  qBittorrent host: {q.get('host', settings.get('qb_host', '(未配置)'))}"

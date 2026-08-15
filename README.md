@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 配置 yemapt `auth`、下载软件 Web API 登录信息，以及用于读取 `.torrent` 元数据的文件系统。
+- 配置 yemapt API AuthKey、下载软件 Web API 登录信息，以及用于读取 `.torrent` 元数据的文件系统。
 - 查看 qBittorrent 中的种子列表和种子详情。
 - 基于 Pieces Hash 查找 qBittorrent 中内容完全相同的重复种子。
 - 检查 qBittorrent 中的种子是否已经被 yemapt 收录。
@@ -66,14 +66,16 @@ yema init
 
 初始化可配置：
 
-- yemapt auth
+- yemapt API AuthKey（在个人详情页创建；不能使用 Cookie 中的登录 auth）
 - qBittorrent Web API 地址、用户名和密码
 - Transmission RPC 地址、用户名、密码，选择一个文件系统，并配置可选路径映射。Docker 场景下，路径映射应填写 Docker 文件夹映射关系：Transmission/容器内路径映射到文件系统/宿主机路径。
 - 文件系统：`local` 内置可用、不需要保存到配置；也支持配置多个 WebDAV、FTP、SFTP 和 SSH；远程文件系统保存前会校验可访问
 
 已有配置项在初始化主菜单中选中后，按回车可选择修改或删除；删除前会二次确认。文件系统列表中，远程文件系统按顺序显示为“文件系统 1/2/3”。
 
-这些配置项都是可选的；只有在运行相关命令时才要求对应配置存在。交互式初始化中如果选择配置某一项，工具会先验证连接或 auth 有效，验证通过后才保存。
+这些配置项都是可选的；只有在运行相关命令时才要求对应配置存在。交互式初始化中如果选择配置某一项，工具会先通过 yemapt Open API 验证 AuthKey 或验证下载软件连接，验证通过后才保存。
+
+yemapt 认证和接口规则以[开放 API 文档](https://wiki.yemapt.org/developer/open-api)为准。
 
 配置会保存到：
 
@@ -196,7 +198,7 @@ debug 模式会输出 qBittorrent 和 yemapt 请求过程，适合排查登录�
 ```json
 {
   "yemapt": {
-    "auth": "YOUR_YEMAPT_AUTH"
+    "auth": "YOUR_YEMAPT_API_AUTH_KEY"
   },
   "qb": {
     "host": "http://127.0.0.1:8080",

@@ -11,7 +11,7 @@ import typer
 SETTINGS_DIR = Path.home() / ".yema"
 SETTINGS_FILE = SETTINGS_DIR / "setting.json"
 YEMAPT_HOST = "https://www.yemapt.org"
-YEMAPT_USER_INFO_URL = "https://www.yemapt.org/openApi/user/fetchBasicInfo.json"
+YEMAPT_USER_INFO_PATH = "/openApi/user/fetchBasicInfo.json"
 
 
 def load_settings() -> Dict[str, Any]:
@@ -39,22 +39,24 @@ def format_secret(value: Optional[str]) -> str:
     return value if len(value) <= 8 else value[:4] + "..." + value[-4:]
 
 
-def fetch_yemapt_basic_info(auth_token: str) -> Dict[str, Any]:
+def fetch_yemapt_basic_info(auth_token: str, host: str = YEMAPT_HOST) -> Dict[str, Any]:
     debug = is_debug_enabled()
+    url = f"{host.rstrip('/')}{YEMAPT_USER_INFO_PATH}"
     masked_auth = auth_token if len(auth_token) <= 16 else auth_token[:8] + "..." + auth_token[-8:]
     if debug:
-        typer.echo(f"[DEBUG] 请求 URL: {YEMAPT_USER_INFO_URL}")
+        typer.echo(f"[DEBUG] 请求 URL: {url}")
         typer.echo(f"[DEBUG] 请求 Header Authorization: {masked_auth}")
 
     request = urllib.request.Request(
-        YEMAPT_USER_INFO_URL,
+        url,
+        data=b"",
         headers={
             "Authorization": auth_token,
             "Accept": "application/json, text/plain, */*",
             "User-Agent": "curl/8.0.1",
             "Connection": "close",
         },
-        method="GET",
+        method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:

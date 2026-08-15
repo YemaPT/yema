@@ -217,7 +217,7 @@ def _ensure_yemapt_auth() -> None:
     if not auth:
         auth = settings.get("yemapt_auth")
     if not auth:
-        raise typer.Exit(code=1, message="未配置 yemapt auth，请先运行 yema init 设置。")
+        raise typer.Exit(code=1, message="未配置 yemapt API AuthKey，请先运行 yema init 设置。")
 
 def deduplicate_torrents():
     """Main function for pieces deduplication"""

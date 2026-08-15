@@ -20,6 +20,22 @@ from yema.core.debug import (
 from yema.domain.torrent_files import BencodeError, piece_hashes_from_torrent_data
 from yema.domain.trackers import normalize_user_id
 
+
+def get_yemapt_host() -> str:
+    settings = load_settings()
+    yemapt = settings.get("yemapt", {})
+    if isinstance(yemapt, dict):
+        return str(yemapt.get("host") or YEMAPT_HOST).rstrip("/")
+    return YEMAPT_HOST.rstrip("/")
+
+
+def get_yemapt_error_message(payload: Dict[str, Any], fallback: str) -> str:
+    message = payload.get("errorMessage")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    return fallback
+
+
 def fetch_torrent_ids_from_pt(pieces_hash_list: List[str], debug: bool = False) -> Dict[str, int | None]:
     """Fetch torrent IDs from PT site for given pieces hashes"""
     settings = load_settings()
@@ -78,7 +94,8 @@ def fetch_torrent_ids_from_pt(pieces_hash_list: List[str], debug: bool = False) 
             typer.echo(f"[DEBUG] PT 响应 JSON - success: {resp_data.get('success')}, data 条数: {len(resp_data.get('data', {}))}")
         if resp_data.get("success"):
             return resp_data.get("data", {})
-        raise typer.Exit(code=1, message="PT 站点返回 success=false")
+        message = get_yemapt_error_message(resp_data, "PT 站点返回 success=false")
+        raise typer.Exit(code=1, message=message)
     except json.JSONDecodeError as exc:
         if debug:
             typer.echo(f"[DEBUG] PT 响应不是 JSON: {get_exception_message(exc)}")
@@ -131,21 +148,27 @@ def get_yemapt_auth() -> str:
     yemapt = settings.get("yemapt", {})
     auth = yemapt.get("auth") or settings.get("yemapt_auth")
     if not auth:
-        raise RuntimeError("未配置 yemapt auth，请先运行 yema init 设置。")
+        raise RuntimeError("未配置 yemapt API AuthKey，请先运行 yema init 设置。")
     return str(auth)
 
 
-def get_pt_download_url_from_key(torrent_id: int, auth: str, debug: bool) -> str:
-    url = f"{YEMAPT_HOST.rstrip('/')}/openApi/torrent/generateDownloadKey?id={torrent_id}"
+def get_pt_download_url_from_key(
+    torrent_id: int,
+    auth: str,
+    debug: bool,
+    host: str = YEMAPT_HOST,
+) -> str:
+    host = host.rstrip("/")
+    url = f"{host}/openApi/torrent/generateDownloadKey.json?id={torrent_id}"
     headers = {
         "Authorization": auth,
         "Accept": "application/json, text/plain, */*",
         "User-Agent": "curl/8.0.1",
         "Connection": "close",
     }
-    request = urllib.request.Request(url, headers=headers, method="GET")
+    request = urllib.request.Request(url, data=b"", headers=headers, method="POST")
     if debug:
-        debug_http_dump("PT 下载 Key", method="GET", url=url, headers=headers)
+        debug_http_dump("PT 下载 Key", method="POST", url=url, headers=headers)
     try:
         response, response_body = fetch_with_remote_disconnect_retry(
             request,
@@ -158,7 +181,7 @@ def get_pt_download_url_from_key(torrent_id: int, auth: str, debug: bool) -> str
         if debug:
             debug_http_dump(
                 "PT 下载 Key",
-                method="GET",
+                method="POST",
                 url=url,
                 headers=headers,
                 response=response,
@@ -166,12 +189,13 @@ def get_pt_download_url_from_key(torrent_id: int, auth: str, debug: bool) -> str
             )
         payload = json.loads(response_body.decode("utf-8", errors="replace"))
         if not payload.get("success"):
-            raise RuntimeError(f"generateDownloadKey 返回 success=false: {payload}")
+            message = get_yemapt_error_message(payload, "站点返回 success=false")
+            raise RuntimeError(f"生成下载凭证失败: {message}")
         data = payload.get("data")
         if isinstance(data, str) and data:
             if data.startswith("http"):
                 return data
-            return f"{YEMAPT_HOST.rstrip('/')}/api/torrent/download1?token={urllib.parse.quote(data)}"
+            return f"{host}/api/torrent/download1?token={urllib.parse.quote(data, safe='')}"
         if isinstance(data, dict):
             for key in ("url", "downloadUrl", "download_url"):
                 value = data.get(key)
@@ -180,8 +204,8 @@ def get_pt_download_url_from_key(torrent_id: int, auth: str, debug: bool) -> str
             for key in ("downloadKey", "key"):
                 value = data.get(key)
                 if isinstance(value, str) and value:
-                    return f"{YEMAPT_HOST.rstrip('/')}/api/torrent/download1?token={urllib.parse.quote(value)}"
-        raise RuntimeError(f"generateDownloadKey 未返回可用下载地址: {payload}")
+                    return f"{host}/api/torrent/download1?token={urllib.parse.quote(value, safe='')}"
+        raise RuntimeError(f"生成下载凭证接口未返回可用凭证: {payload}")
     except urllib.error.HTTPError as exc:
         body = ""
         try:
@@ -191,14 +215,14 @@ def get_pt_download_url_from_key(torrent_id: int, auth: str, debug: bool) -> str
         if debug:
             debug_http_dump(
                 "PT 下载 Key",
-                method="GET",
+                method="POST",
                 url=url,
                 headers=headers,
                 response=exc,
                 response_body=body,
                 error=exc,
             )
-        raise RuntimeError(f"generateDownloadKey 失败: {exc.code} {exc.reason}")
+        raise RuntimeError(f"生成下载凭证失败: {exc.code} {exc.reason}")
     except urllib.error.URLError as exc:
         raise RuntimeError(f"无法连接到 PT 站点: {exc.reason}")
 
@@ -256,6 +280,7 @@ def download_torrent_bytes(
 def download_torrent_from_pt(torrent_id: int) -> bytes:
     debug = is_debug_enabled()
     auth = get_yemapt_auth()
+    host = get_yemapt_host()
     if debug:
         typer.echo(f"[DEBUG] 开始下载 PT 种子: torrent_id={torrent_id}")
     last_error: BencodeError | None = None
@@ -268,7 +293,7 @@ def download_torrent_from_pt(torrent_id: int) -> bytes:
                 f"torrent_id={torrent_id}, retry={attempt - 1}/{max_retries}"
             )
             time.sleep(delay)
-        download_url = get_pt_download_url_from_key(torrent_id, auth, debug)
+        download_url = get_pt_download_url_from_key(torrent_id, auth, debug, host)
         if debug:
             typer.echo(f"[DEBUG] PT 下载 Key 返回地址: {download_url}")
         data = download_torrent_bytes(
@@ -299,7 +324,7 @@ def get_current_yemapt_user_id() -> str | None:
         return None
 
     try:
-        result = fetch_yemapt_basic_info(auth)
+        result = fetch_yemapt_basic_info(auth, get_yemapt_host())
     except Exception:
         return None
 

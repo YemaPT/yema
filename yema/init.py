@@ -8,6 +8,7 @@ from typing import Dict, Optional
 import typer
 
 from .config.utils import (
+    YEMAPT_HOST,
     fetch_qbittorrent_login,
     fetch_yemapt_basic_info,
     load_settings,
@@ -110,7 +111,7 @@ def validate_yemapt_status(settings: Dict[str, object]) -> Dict[str, object]:
     if not auth:
         return {"valid": False, "display": "未配置"}
     try:
-        result = fetch_yemapt_basic_info(auth)
+        result = fetch_yemapt_basic_info(str(auth), str(yemapt.get("host") or YEMAPT_HOST))
     except typer.Exit:
         return {"valid": False, "display": "配置无效"}
     if not result.get("success"):
@@ -230,8 +231,8 @@ def transmission_status_from_config(settings: Dict[str, object]) -> Dict[str, ob
 
 def prompt_yemapt_auth(existing_auth: Optional[str] = None) -> Dict[str, object]:
     while True:
-        auth = prompt_secret("请输入 yemapt auth（留空复用当前值）", default=existing_auth) if existing_auth else prompt_secret("请输入 yemapt auth")
-        typer.echo("正在验证 yemapt auth...")
+        auth = prompt_secret("请输入 yemapt API AuthKey（留空复用当前值）", default=existing_auth) if existing_auth else prompt_secret("请输入 yemapt API AuthKey")
+        typer.echo("正在验证 yemapt API AuthKey...")
         try:
             result = fetch_yemapt_basic_info(auth)
         except typer.Exit as exc:
@@ -239,12 +240,13 @@ def prompt_yemapt_auth(existing_auth: Optional[str] = None) -> Dict[str, object]
             continue
 
         if not result.get("success"):
-            typer.echo("yemapt auth 验证失败，success=false。请重新输入。", err=True)
+            message = result.get("errorMessage") or "站点返回 success=false"
+            typer.echo(f"yemapt API AuthKey 验证失败：{message}。请重新输入。", err=True)
             continue
 
         data = result.get("data", {})
         typer.secho(
-            f"yemapt auth 验证通过，id={data.get('id')}，username={data.get('name')}",
+            f"yemapt API AuthKey 验证通过，id={data.get('id')}，username={data.get('name')}",
             fg="green",
         )
         return {"auth": auth, "username": data.get("name")}
@@ -268,15 +270,15 @@ def confirm_or_edit_yemapt(settings: Dict[str, object]) -> Dict[str, object]:
 
     if has_config_value(yemapt):
         username = str(yemapt.get("username") or "")
-        display = f"当前 yemapt auth 配置：username={username or '-'}"
+        display = f"当前 yemapt API AuthKey 配置：username={username or '-'}"
         action = select_config_action(display)
         if action in {None, "back"}:
             return yemapt
         if action == "delete":
-            if typer.confirm("确认删除 yemapt auth 配置？", default=False):
+            if typer.confirm("确认删除 yemapt API AuthKey 配置？", default=False):
                 return {}
             return yemapt
-        typer.echo("请重新输入新的 yemapt auth。")
+        typer.echo("请重新输入新的 yemapt API AuthKey。")
 
     return prompt_yemapt_auth(str(yemapt.get("auth") or "") or None)
 
