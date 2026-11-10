@@ -40,7 +40,7 @@ from yema.services.torrents import (
 from yema.storage.cache import (
     delete_tracker_cache_entries,
     get_valid_pt_cache_entry,
-    save_pt_pieces_to_cache,
+    save_pt_pieces_batch,
 )
 from yema.ui.screens import show_check_results, show_deduplicated_torrents, show_pub_results, show_torrent_details
 
@@ -381,8 +381,7 @@ def _collect_pub_torrents(
                 try:
                     batch_result = fetch_torrent_ids_from_pt(batch, debug=debug)
                     pt_results.update(batch_result)
-                    for ph in batch:
-                        save_pt_pieces_to_cache(ph, batch_result.get(ph))
+                    save_pt_pieces_batch(batch, batch_result)
                 except typer.Exit as e:
                     typer.echo(f"\nPT 查询失败: {e.message or str(e)}", err=True)
                 except Exception as e:
@@ -564,6 +563,7 @@ def seed_torrents(
         typer.echo("没有需要补种或替换的项目。")
         return
 
+    consecutive_failures = 0
     for index, item in enumerate(candidates, 1):
         context = context_by_source[item["source"]]
         seed_action = "已有做种替换" if item["replace_info_hashes"] else "新下载"
@@ -620,6 +620,7 @@ def seed_torrents(
             if debug:
                 typer.echo(f"[DEBUG] {item['source']} 添加新种完成: {item['name']}")
             typer.echo(f"已完成: {seed_action}")
+            consecutive_failures = 0
         except Exception as exc:
             msg = get_exception_message(exc)
             if len(msg) > 200:
@@ -639,4 +640,9 @@ def seed_torrents(
                 if debug:
                     typer.echo(f"[DEBUG] 候选执行失败类型: {exc.__class__.__name__}")
                     typer.echo(f"[DEBUG] 候选执行失败详情: {msg}")
-            return
+            # 单个候选项失败不应终止整批补种；仅在连续失败时熔断，避免断网下重复无效请求。
+            consecutive_failures += 1
+            if consecutive_failures >= 5:
+                typer.echo("连续 5 个候选处理失败，疑似网络或下载软件异常，提前停止。", err=True)
+                return
+            continue

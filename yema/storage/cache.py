@@ -10,6 +10,11 @@ PT_CACHE_MISS_TTL = 60
 PT_CACHE_MISS_SENTINEL = -1
 TRACKER_CACHE_TTL = 30 * 24 * 60 * 60
 
+# 进程内缓存单例：数万种子逐个遍历时，避免重复读取/解析整份缓存文件（原实现为 O(N²)）。
+# 所有调用方都遵循 load → 修改 → save 的模式，共享同一份内存对象不会丢失更新。
+_qb_torrent_cache_singleton: Dict[str, Dict[str, Any]] | None = None
+_pt_pieces_cache_singleton: Dict[str, tuple] | None = None
+
 def get_qb_torrent_cache_file_path() -> str:
     """Get the path to the unified qB torrent cache file."""
     import os
@@ -68,6 +73,9 @@ def load_legacy_qb_torrent_cache() -> Dict[str, Dict[str, Any]]:
 
 def load_qb_torrent_cache() -> Dict[str, Dict[str, Any]]:
     """Load unified qB torrent cache. Format: infoHash:{...json...} per line."""
+    global _qb_torrent_cache_singleton
+    if _qb_torrent_cache_singleton is not None:
+        return _qb_torrent_cache_singleton
     cache_file = get_qb_torrent_cache_file_path()
     cache: Dict[str, Dict[str, Any]] = {}
     try:
@@ -92,10 +100,12 @@ def load_qb_torrent_cache() -> Dict[str, Dict[str, Any]]:
                 changed = True
     if changed:
         save_qb_torrent_cache(cache)
+    _qb_torrent_cache_singleton = cache
     return cache
 
 
 def save_qb_torrent_cache(cache: Dict[str, Dict[str, Any]]) -> None:
+    global _qb_torrent_cache_singleton
     cache_file = get_qb_torrent_cache_file_path()
     try:
         with open(cache_file, "w", encoding="utf-8") as f:
@@ -103,6 +113,7 @@ def save_qb_torrent_cache(cache: Dict[str, Dict[str, Any]]) -> None:
                 f.write(f"{info_hash}:{json.dumps(entry, ensure_ascii=False, separators=(',', ':'))}\n")
     except Exception:
         pass
+    _qb_torrent_cache_singleton = cache
 
 
 def get_cached_pieces_hash(info_hash: str) -> str | None:
@@ -136,6 +147,9 @@ def get_pt_cache_file_path() -> str:
 
 def load_pt_pieces_cache() -> Dict[str, tuple]:
     """Load PT pieces cache from file. Format: piecesHash:torrentId:timestamp"""
+    global _pt_pieces_cache_singleton
+    if _pt_pieces_cache_singleton is not None:
+        return _pt_pieces_cache_singleton
     cache_file = get_pt_cache_file_path()
     cache = {}
     try:
@@ -153,22 +167,39 @@ def load_pt_pieces_cache() -> Dict[str, tuple]:
                                 pass
     except Exception:
         pass
+    _pt_pieces_cache_singleton = cache
     return cache
 
 
-def save_pt_pieces_to_cache(pieces_hash: str, torrent_id: int | None) -> None:
-    """Save a PT pieces entry to cache file"""
-    import time
+def save_pt_pieces_cache(cache: Dict[str, tuple]) -> None:
+    """Write the PT pieces cache to disk and refresh the in-process singleton."""
+    global _pt_pieces_cache_singleton
     cache_file = get_pt_cache_file_path()
-    cache = load_pt_pieces_cache()
-    timestamp = int(time.time())
-    cache[pieces_hash] = (PT_CACHE_MISS_SENTINEL if torrent_id is None else torrent_id, timestamp)
     try:
         with open(cache_file, "w", encoding="utf-8") as f:
             for ph, (tid, ts) in sorted(cache.items()):
                 f.write(f"{ph}:{tid}:{ts}\n")
     except Exception:
         pass
+    _pt_pieces_cache_singleton = cache
+
+
+def save_pt_pieces_to_cache(pieces_hash: str, torrent_id: int | None) -> None:
+    """Save a single PT pieces entry to cache."""
+    cache = load_pt_pieces_cache()
+    timestamp = int(time.time())
+    cache[pieces_hash] = (PT_CACHE_MISS_SENTINEL if torrent_id is None else torrent_id, timestamp)
+    save_pt_pieces_cache(cache)
+
+
+def save_pt_pieces_batch(pieces_hashes: List[str], result: Dict[str, int | None]) -> None:
+    """Persist one PT query batch in a single write instead of one write per hash."""
+    cache = load_pt_pieces_cache()
+    timestamp = int(time.time())
+    for pieces_hash in pieces_hashes:
+        torrent_id = result.get(pieces_hash)
+        cache[pieces_hash] = (PT_CACHE_MISS_SENTINEL if torrent_id is None else torrent_id, timestamp)
+    save_pt_pieces_cache(cache)
 
 
 def get_valid_pt_cache_entry(pieces_hash: str) -> tuple[bool, int | None]:
@@ -183,10 +214,7 @@ def get_valid_pt_cache_entry(pieces_hash: str) -> tuple[bool, int | None]:
         else:
             try:
                 del cache[pieces_hash]
-                cache_file = get_pt_cache_file_path()
-                with open(cache_file, "w", encoding="utf-8") as f:
-                    for ph, (tid, ts) in sorted(cache.items()):
-                        f.write(f"{ph}:{tid}:{ts}\n")
+                save_pt_pieces_cache(cache)
             except Exception:
                 pass
     return False, None

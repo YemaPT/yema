@@ -4,6 +4,25 @@ from typing import Optional
 
 import typer
 
+# 兼容性补丁：typer 在新版本（vendored click）中将 Exit 的签名改为仅接受
+# `code`，不再支持 `message`，也不再暴露 `.message` / `.code` 属性。
+# 本项目大量使用 `typer.Exit(code=1, message="...")`，且多处业务代码读取
+# `exc.message`（如 PT 批次查询失败处理）。这里在入口处完整恢复旧版语义：
+# 保存属性、把 message 输出到 stderr，再按指定退出码退出。
+# 旧版本（Exit 已支持 message）会自动跳过此补丁。
+if "message" not in getattr(typer.Exit.__init__.__code__, "co_varnames", ()):
+    _OriginalExit = typer.Exit
+
+    class _CompatExit(_OriginalExit):
+        def __init__(self, code: int = 0, message: str = "") -> None:
+            self.code = code
+            self.message = message
+            super().__init__(code)
+            if message:
+                typer.echo(message, err=True)
+
+    typer.Exit = _CompatExit
+
 from .config import config_app
 from .commands.qb import qb_command, check_torrents, seed_torrents, pub_torrents
 from .commands.transmission import (
