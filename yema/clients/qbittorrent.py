@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.cookiejar
 import json
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -17,6 +18,31 @@ from yema.domain.trackers import is_tracker_address
 from yema.storage.cache import get_valid_tracker_cache_entry, load_qb_torrent_cache, save_qb_torrent_cache
 
 QB_TORRENTS_INFO_PATH = "/api/v2/torrents/info"
+
+
+def open_qb_with_retry(
+    opener: urllib.request.OpenerDirector,
+    request: urllib.request.Request,
+    timeout: int,
+    attempts: int = 3,
+) -> Any:
+    """qB 在数万种子规模下偶发超时，做有限次重试。
+
+    Python 3.10+ 的 urlopen 在套接字超时时会抛出裸 TimeoutError 而非
+    URLError；重试耗尽后统一包装为 URLError，交由各调用方已有的错误处理分支
+    输出友好提示，避免异常冒泡成顶层的「错误: timed out」。
+    """
+    last_error: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError:
+            raise  # HTTP 状态码错误不是瞬时故障，立即交由上层处理
+        except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            last_error = exc
+            if attempt < attempts:
+                time.sleep(0.5 * attempt)
+    raise urllib.error.URLError(last_error)
 
 def get_qb_settings() -> Dict[str, str]:
     settings = load_settings()
@@ -38,19 +64,26 @@ def create_qb_opener(host: str, username: str, password: str) -> urllib.request.
     request = urllib.request.Request(
         login_url,
         data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer": f"{host}/",
+        },
         method="POST",
     )
     debug = is_debug_enabled()
     if debug:
         typer.echo(f"[DEBUG] qBittorrent 登录 URL: {login_url}")
     try:
-        with opener.open(request, timeout=10) as response:
-            body = response.read().decode("utf-8")
+        with open_qb_with_retry(opener, request, 10) as response:
+            body = response.read().decode("utf-8", errors="replace")
             if debug:
-                typer.echo(f"[DEBUG] qBittorrent 登录响应: {body}")
-            if body.strip() != "Ok.":
-                raise typer.Exit(code=1, message=f"qBittorrent 登录失败，响应：{body}")
+                typer.echo(f"[DEBUG] qBittorrent 登录响应: {response.status} {body}")
+            # qBittorrent 4.x 登录成功返回 200 + body="Ok."；
+            # qBittorrent 5.x 改为返回 204 + 空 body，但都会下发 SID cookie。
+            # 以“是否下发 SID cookie 且状态码 < 400”判定登录成功，兼容两个大版本。
+            sid_set = any(c.name.startswith("QBT_SID") or c.name == "SID" for c in cookiejar)
+            if response.status >= 400 or not sid_set:
+                raise typer.Exit(code=1, message=f"qBittorrent 登录失败，响应：{response.status} {body}")
     except urllib.error.HTTPError as exc:
         if debug:
             typer.echo(f"[DEBUG] qBittorrent 登录 HTTPError: {exc.code} {exc.reason}")
@@ -70,7 +103,8 @@ def fetch_qb_torrents(opener: urllib.request.OpenerDirector, host: str) -> List[
         headers={"Accept": "application/json", "User-Agent": "python-urllib/3"},
     )
     try:
-        with opener.open(request, timeout=10) as response:
+        # 数万种子的列表响应较大，放宽单次超时上限（实测约 8s）。
+        with open_qb_with_retry(opener, request, 30) as response:
             body = response.read().decode("utf-8")
             return json.loads(body)
     except urllib.error.HTTPError as exc:
@@ -84,7 +118,7 @@ def fetch_qb_torrent_properties(opener: urllib.request.OpenerDirector, host: str
     url = f"{host}/api/v2/torrents/properties?hash={urllib.parse.quote(torrent_hash)}"
     request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "python-urllib/3"})
     try:
-        with opener.open(request, timeout=10) as response:
+        with open_qb_with_retry(opener, request, 10) as response:
             body = response.read().decode("utf-8")
             return json.loads(body)
     except urllib.error.HTTPError as exc:
@@ -98,7 +132,7 @@ def fetch_qb_torrent_trackers(opener: urllib.request.OpenerDirector, host: str, 
     url = f"{host}/api/v2/torrents/trackers?hash={urllib.parse.quote(torrent_hash)}"
     request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "python-urllib/3"})
     try:
-        with opener.open(request, timeout=10) as response:
+        with open_qb_with_retry(opener, request, 10) as response:
             body = response.read().decode("utf-8")
             return json.loads(body)
     except urllib.error.HTTPError as exc:
@@ -133,7 +167,7 @@ def fetch_qb_torrent_piece_hashes(opener: urllib.request.OpenerDirector, host: s
     url = f"{host}/api/v2/torrents/pieceHashes?hash={urllib.parse.quote(torrent_hash)}"
     request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "python-urllib/3"})
     try:
-        with opener.open(request, timeout=10) as response:
+        with open_qb_with_retry(opener, request, 10) as response:
             body = response.read().decode("utf-8")
             return json.loads(body)
     except urllib.error.HTTPError as exc:
@@ -152,7 +186,10 @@ def delete_qb_torrents(opener: urllib.request.OpenerDirector, host: str, info_ha
         "hashes": "|".join(info_hashes),
         "deleteFiles": "false",
     }).encode("utf-8")
-    request_headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    request_headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": f"{host}/",
+    }
     if debug:
         typer.echo(f"[DEBUG] 删除 qB 种子 infohash 数量: {len(info_hashes)}")
         typer.echo(f"[DEBUG] 删除 qB 种子 infohash 列表: {', '.join(info_hashes)}")
@@ -164,7 +201,7 @@ def delete_qb_torrents(opener: urllib.request.OpenerDirector, host: str, info_ha
         method="POST",
     )
     try:
-        with opener.open(request, timeout=20) as response:
+        with open_qb_with_retry(opener, request, 20) as response:
             response_body = response.read().decode("utf-8", errors="ignore")
             if debug:
                 debug_http_dump(
@@ -233,6 +270,7 @@ def add_qb_torrent(
         "Content-Type": f"multipart/form-data; boundary={boundary}",
         "Accept": "text/plain, */*",
         "User-Agent": "python-urllib/3",
+        "Referer": f"{host}/",
     }
     if debug:
         typer.echo(f"[DEBUG] 添加 qB 种子保存路径: {save_path}")
@@ -250,7 +288,7 @@ def add_qb_torrent(
         method="POST",
     )
     try:
-        with opener.open(request, timeout=30) as response:
+        with open_qb_with_retry(opener, request, 30) as response:
             response_body = response.read().decode("utf-8", errors="ignore")
             if debug:
                 debug_http_dump(

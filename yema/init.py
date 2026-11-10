@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import sys
-import termios
-import tty
 from typing import Dict, Optional
 
 import typer
@@ -44,6 +42,32 @@ def ensure_nested_settings(settings: Dict[str, object]) -> Dict[str, object]:
 
 
 def read_key() -> str:
+    # Windows: read directly from the console input buffer via msvcrt.
+    if sys.platform.startswith("win"):
+        import msvcrt
+
+        ch = msvcrt.getwch()
+        if ch == "\x1b":
+            return "ESC"
+        if ch == "\r":
+            return "ENTER"
+        if ch in ("\x00", "\xe0"):
+            second = msvcrt.getwch()
+            if second == "H":
+                return "UP"
+            if second == "P":
+                return "DOWN"
+            if second == "M":
+                return "RIGHT"
+            if second == "K":
+                return "LEFT"
+            return second
+        return ch
+
+    # POSIX: raw terminal mode via termios/tty.
+    import termios
+    import tty
+
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:

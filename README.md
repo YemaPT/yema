@@ -122,6 +122,8 @@ yema seed
 yema seed -y
 ```
 
+单个候选项处理失败时会提示错误并继续处理其余项目；若连续 5 个候选项失败，会提前停止，避免在断网等情况下重复发起无效请求。
+
 只处理指定下载软件：
 
 ```bash
@@ -188,7 +190,8 @@ debug 模式会输出 qBittorrent 和 yemapt 请求过程，适合排查登录�
 
 ## 注意事项
 
-- 需要先启用 qBittorrent Web UI，并确保当前机器可以访问 Web API。
+- 需要先启用 qBittorrent Web UI，并确保当前机器可以访问 Web API。已兼容 qBittorrent 4.x / 5.x（5.x 登录返回 204 空响应，且写操作需要 `Referer` 头）。
+- Windows 可直接运行；交互式菜单通过控制台读取按键（方向键、回车、Esc），无需 POSIX 终端。
 - `seed` 添加新种时会使用原 qBittorrent 种子的保存路径，并开启跳过校验添加。
 - 替换已有非当前用户 yemapt 做种时，工具只删除 qBittorrent 中的旧任务，不删除本地文件。
 - `pub` 只是辅助列出未收录种子，不会自动发布到 yemapt。

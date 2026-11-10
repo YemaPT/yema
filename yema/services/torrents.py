@@ -27,7 +27,7 @@ from yema.storage.cache import (
     load_pt_pieces_cache,
     load_qb_torrent_cache,
     save_pieces_to_cache,
-    save_pt_pieces_to_cache,
+    save_pt_pieces_batch,
     save_qb_torrent_cache,
 )
 
@@ -230,8 +230,7 @@ def collect_pt_check_results(
             if debug:
                 typer.echo(f"[DEBUG] 批次 {batch_idx} 返回结果数: {len(batch_result)}")
 
-            for ph in batch:
-                save_pt_pieces_to_cache(ph, batch_result.get(ph))
+            save_pt_pieces_batch(batch, batch_result)
         except typer.Exit as e:
             typer.echo(f"\nPT 查询失败: {e.message or str(e)}", err=True)
             if debug:

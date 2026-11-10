@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import secrets
+import socket
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -82,10 +83,16 @@ def debug_http_dump(
         typer.echo(f"[DEBUG] {prefix} 异常详情: {get_exception_message(error)}")
 
 
-def is_retryable_remote_disconnect(error: BaseException) -> bool:
-    if isinstance(error, http.client.RemoteDisconnected):
+def is_retryable_network_error(error: BaseException) -> bool:
+    """判断是否为值得重试的瞬时网络错误：对端断连、连接重置、读写/握手超时。"""
+    transient = (http.client.RemoteDisconnected, ConnectionError, TimeoutError, socket.timeout)
+    if isinstance(error, transient):
         return True
-    return "Remote end closed connection without response" in get_exception_message(error)
+    # URLError 把底层套接字异常放在 .reason（如 WinError 10054 的 ConnectionResetError）
+    if isinstance(getattr(error, "reason", None), transient):
+        return True
+    message = get_exception_message(error)
+    return "Remote end closed connection without response" in message or "timed out" in message
 
 
 def fetch_with_remote_disconnect_retry(
@@ -118,10 +125,10 @@ def fetch_with_remote_disconnect_retry(
                     body=request_body,
                     error=exc,
                 )
-            if attempt < 4 and is_retryable_remote_disconnect(exc):
+            if attempt < 4 and is_retryable_network_error(exc):
                 continue
             raise
-        except http.client.RemoteDisconnected as exc:
+        except (http.client.RemoteDisconnected, ConnectionError, TimeoutError, socket.timeout) as exc:
             last_error = exc
             if debug:
                 debug_http_dump(
